@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Better KB shortcuts
 // @namespace    local.servicenow.better-kb-shortcuts
-// @version      0.9.5
+// @version      0.9.6
 // @description  Adds copy, edit and Workspace shortcuts and a tidy, aligned header to knowledge portal articles.
 // @author       Miche (based on LPS KB Portal view by Lucas Vieites)
 // @homepageURL  https://github.com/Miche-Miche-Miche/Better-KB-shortcuts
@@ -16,34 +16,37 @@
 /*
 Better KB shortcuts: a tidier header for knowledge portal (/lps) articles.
 Line 1: KB number, Copy link, Edit article, Flag article, Open in Workspace.
-Line 2: KB number and title, linked to the article. Never saves anything.
+Line 2: KB number and title, linked to the article.
+Bell next to the heart: subscribe or unsubscribe.
+Never saves anything automatically; changes occur only when you click an action.
 Based on "LPS KB Portal view" v0.8.4 by Lucas Vieites:
 https://gist.github.com/lucasvieites/3e1543562b88b9f51c22fcd13c4ea1f9
 Maintainers: keep this note and the changelog up to date.
 */
 
-/** ChangeLog:
-v0.9.0: - First release of the fork: two-line header, no company references
-v0.9.1: - Responsive header: the heart moves below only when space is short
-v0.9.2: - Actions menu items moved into line 1; Actions menu hidden
-v0.9.3: - Edit article opens the latest version, like the portal's own Edit
-v0.9.4: - Hide the Edit article link in the views and rating row
+/** ChangeLog (newest first):
+v0.9.6: - Subscribe button replaced by a bell next to the heart, with a short confirmation
 v0.9.5: - Shorter description and changelog
+v0.9.4: - Hide the Edit article link in the views and rating row
+v0.9.3: - Edit article opens the latest version, like the portal's own Edit
+v0.9.2: - Actions menu items moved into line 1; Actions menu hidden
+v0.9.1: - Responsive header: the heart moves below only when space is short
+v0.9.0: - First release of the fork: two-line header, no company references
 
 Original "LPS KB Portal view" changelog (Lucas Vieites):
+v0.8.4: - Updated @updateURL and @downloadURL
+v0.8.3: - Fix <title> for article with a dash in the title
+v0.8.2: - Fix title capture after <title> content was reorganized
+v0.8: - Make full link domain agnostic
+v0.7: - Added "Edit" button
+v0.6: - Added another sub-production instance
+v0.5: - Show hidden Actions menu (was previously done in Stylus CSS)
+v0.4: - Added @icon in meta block and fixed bug with article titles that contain a dash
+v0.3: - Added link in the Actions menu to Workspace (for easier version comparison)
+v0.2: - Added ChangeLog
 v0.1: - Initial release for the production and sub-production instances
       - Adds Link to the article for easier copy/paste
       - Updates tab title to: KBnumber - Title
-v0.2: - Added ChangeLog
-v0.3: - Added link in the Actions menu to Workspace (for easier version comparison)
-v0.4: - Added @icon in meta block and fixed bug with article titles that contain a dash
-v0.5: - Show hidden Actions menu (was previously done in Stylus CSS)
-v0.6: - Added another sub-production instance
-v0.7: - Added "Edit" button
-v0.8: - Make full link domain agnostic
-v0.8.2: - Fix title capture after <title> content was reorganized
-v0.8.3: - Fix <title> for article with a dash in the title
-v0.8.4: - Updated @updateURL and @downloadURL
 */
 
 (() => {
@@ -72,6 +75,13 @@ v0.8.4: - Updated @updateURL and @downloadURL
     // Hide the Actions menu button and list; line 1 shows the same actions.
     // Set to false to keep the menu visible as well.
     HIDE_ACTIONS_MENU: true,
+    // Show the portal's subscribe button as a bell next to the heart: empty
+    // when not subscribed, filled when subscribed. Set to false to keep the
+    // portal's own button.
+    SUBSCRIBE_AS_BELL: true,
+    // How long to wait for the portal to confirm a subscription change
+    // before reporting that nothing changed (milliseconds).
+    SUBSCRIBE_CONFIRM_MS: 8000,
     // Hide the Edit article link (and its dot) in the views and rating row
     // under the title. Set to false to show it again.
     HIDE_VIEWS_ROW_EDIT: true,
@@ -202,6 +212,19 @@ v0.8.4: - Updated @updateURL and @downloadURL
         flex: 0 0 auto; margin-left: auto; padding-left: .5em !important;
       }
       .${PREFIX}-header a:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+      /* Subscription bell: sized and coloured like the heart (copied at run
+         time); the confirmation floats below it without moving anything. */
+      .${PREFIX}-bell-wrap { position: relative; display: inline-block; vertical-align: middle; margin-left: .5rem; }
+      /* Defaults close to the heart; the heart's real size and colour are
+         copied onto the icon when the heart can be found. */
+      .${PREFIX}-bell { background: none; border: 0; padding: 0 .2em; margin: 0; cursor: pointer; color: #006ce4; font-size: 2.2rem; line-height: 1; }
+      .${PREFIX}-bell:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+      .${PREFIX}-toast {
+        position: absolute; top: calc(100% + .4em); right: 0; z-index: 1000;
+        white-space: nowrap; font-size: 1.3rem; font-weight: 400; line-height: 1.4;
+        padding: .2em .6em; border-radius: .4em; background: #333; color: #fff;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, .2); pointer-events: none;
+      }
     `;
     (document.head || document.documentElement).appendChild(style);
   }
@@ -292,7 +315,8 @@ v0.8.4: - Updated @updateURL and @downloadURL
         const control = li.querySelector('a, button');
         const label = control ? (control.textContent || '').replace(/\s+/g, ' ').trim() : '';
         let kind = 'other';
-        if (/^flag\b/i.test(label)) kind = 'flag';
+        if (/subscri/i.test(label)) kind = 'subscribe';
+        else if (/^flag\b/i.test(label)) kind = 'flag';
         else if (/^edit\b/i.test(label)) kind = 'edit';
         else if (/workspace/i.test(label)) kind = 'workspace';
         return { control, label, kind };
@@ -332,6 +356,169 @@ v0.8.4: - Updated @updateURL and @downloadURL
       if (label) addClass(label, PREFIX + '-native-hidden');
       if (menu) addClass(menu, PREFIX + '-native-hidden');
     }
+  }
+
+  // ---- Subscription bell ----------------------------------------------------
+
+  // The portal's subscribe button reads "Subscribe" when not subscribed and
+  // "Subscribed" (or "Unsubscribe" while hovered) when subscribed. Any other
+  // wording returns null, and the portal's own button is then left alone.
+  function subscriptionState(text) {
+    const label = String(text || '').replace(/\s+/g, ' ').trim();
+    if (/^(subscribed|unsubscribe)$/i.test(label)) return true;
+    if (/^subscribe$/i.test(label)) return false;
+    return null;
+  }
+
+  function findSubscribeButton(heading) {
+    return heading.querySelector('button.kb-subscribe');
+  }
+
+  // The control that changes the subscription: the button by the heart, or
+  // the Actions menu item (used on narrow windows, where the button is not
+  // shown).
+  function subscribeControl() {
+    const heading = findHeading();
+    const button = heading && findSubscribeButton(heading);
+    if (button) return button;
+    const item = nativeActions().find((action) => action.kind === 'subscribe');
+    return item ? item.control : null;
+  }
+
+  // Waiting for the portal to confirm a click: { from, where }.
+  const subscription = { pending: null, timer: 0 };
+
+  function requestSubscriptionChange(where) {
+    const control = subscribeControl();
+    const from = control ? subscriptionState(control.textContent) : null;
+    if (from === null) {
+      notifySubscription(where, EMOJI.copyFailed, 'Subscription unavailable');
+      return;
+    }
+    subscription.pending = { from, where };
+    window.clearTimeout(subscription.timer);
+    subscription.timer = window.setTimeout(() => {
+      if (!subscription.pending) return;
+      const pending = subscription.pending;
+      subscription.pending = null;
+      notifySubscription(pending.where, EMOJI.copyFailed, 'Subscription not changed');
+    }, CONFIG.SUBSCRIBE_CONFIRM_MS);
+    control.click(); // The portal's own action does the change.
+  }
+
+  // Confirm only what the portal actually shows afterwards.
+  function confirmSubscription(state) {
+    const pending = subscription.pending;
+    if (!pending || state === null || state === pending.from) return;
+    subscription.pending = null;
+    window.clearTimeout(subscription.timer);
+    notifySubscription(pending.where, state ? EMOJI.subscribed : EMOJI.unsubscribed,
+      state ? 'Subscribed' : 'Unsubscribed');
+  }
+
+  let toastTimer = 0;
+  let itemFeedback = false;
+
+  function notifySubscription(where, symbol, text) {
+    if (where === 'bell') {
+      const toast = document.querySelector('.' + PREFIX + '-toast');
+      if (!toast) return;
+      window.clearTimeout(toastTimer);
+      toast.textContent = symbol + ' ' + text;
+      toast.hidden = false;
+      toastTimer = window.setTimeout(() => { toast.hidden = true; }, CONFIG.COPIED_FEEDBACK_MS);
+      return;
+    }
+    const item = document.querySelector('.' + PREFIX + '-subscribe');
+    if (!item) return;
+    itemFeedback = true;
+    item.querySelector('.' + PREFIX + '-emoji').textContent = symbol;
+    item.querySelector('.' + PREFIX + '-label').textContent = text;
+    window.clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(() => {
+      itemFeedback = false;
+      scheduleCheck(); // Restores the item's normal label.
+    }, CONFIG.COPIED_FEEDBACK_MS);
+  }
+
+  function removeClass(element, name) {
+    if (element.classList.contains(name)) element.classList.remove(name);
+  }
+
+  function buildBell() {
+    const wrap = document.createElement('span');
+    wrap.className = PREFIX + '-bell-wrap';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = PREFIX + '-bell';
+    const icon = document.createElement('i');
+    icon.setAttribute('aria-hidden', 'true');
+    button.append(icon);
+    const toast = document.createElement('span');
+    toast.className = PREFIX + '-toast';
+    toast.setAttribute('role', 'status');
+    toast.hidden = true;
+    wrap.append(button, toast);
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      requestSubscriptionChange('bell');
+    });
+    return wrap;
+  }
+
+  // The favourite heart next to the subscribe button (its exact markup can
+  // vary, so a few likely forms are recognised).
+  function findHeart(heading) {
+    const candidate = heading.querySelector(
+      '[class*="heart"], [class*="favorite"], [class*="favourite"], ' +
+      '[aria-label*="avorit"], [aria-label*="avourit"], [title*="avorit"], [title*="avourit"]');
+    if (!candidate || candidate.closest('.' + PREFIX + '-bell-wrap')) return null;
+    // Prefer the drawn icon inside a button, which carries the real size.
+    return candidate.querySelector('i, svg, [class*="heart"]') || candidate;
+  }
+
+  // Copy the heart's on-screen size and colour so the bell matches it.
+  function matchHeart(heading, icon) {
+    const heart = findHeart(heading);
+    if (!heart) return;
+    const color = getComputedStyle(heart).getPropertyValue('color');
+    if (color && icon.style.getPropertyValue('color') !== color) icon.style.setProperty('color', color);
+    const height = heart.getBoundingClientRect().height;
+    if (height > 8) {
+      const size = Math.round(height) + 'px';
+      if (icon.style.getPropertyValue('font-size') !== size) icon.style.setProperty('font-size', size);
+    }
+  }
+
+  // Replace (visually) the portal's subscribe button with a bell. The
+  // portal's button stays in the page, hidden, and still does the work.
+  // Returns the current state and whether the bell is on screen.
+  function ensureBell(heading) {
+    const nativeButton = findSubscribeButton(heading);
+    const state = nativeButton ? subscriptionState(nativeButton.textContent) : null;
+    let wrap = heading.querySelector('.' + PREFIX + '-bell-wrap');
+    if (!CONFIG.SUBSCRIBE_AS_BELL || !nativeButton || state === null) {
+      if (wrap) wrap.remove();
+      if (nativeButton) removeClass(nativeButton, PREFIX + '-native-hidden');
+      return { state, shown: false, nativeShown: isRendered(nativeButton) };
+    }
+    if (!wrap) wrap = buildBell();
+    // Sit exactly where the portal's button is, so the bell follows its
+    // layout (including being hidden on narrow windows, like the button).
+    if (nativeButton.nextSibling !== wrap) {
+      nativeButton.parentNode.insertBefore(wrap, nativeButton.nextSibling);
+    }
+    addClass(nativeButton, PREFIX + '-native-hidden');
+
+    const button = wrap.querySelector('.' + PREFIX + '-bell');
+    const icon = button.querySelector('i');
+    setAttributeIfChanged(icon, 'class', state ? 'fa fa-bell' : 'fa fa-bell-o');
+    const label = state ? 'Unsubscribe from this article' : 'Subscribe to this article';
+    setAttributeIfChanged(button, 'aria-label', label);
+    setAttributeIfChanged(button, 'title', label);
+    setAttributeIfChanged(button, 'aria-pressed', String(state));
+    matchHeart(heading, icon);
+    return { state, shown: isRendered(wrap), nativeShown: false };
   }
 
   // ---- Views and rating row under the title --------------------------------
@@ -506,6 +693,8 @@ v0.8.4: - Updated @updateURL and @downloadURL
     edit: '\u270F\uFE0F',     // Pencil
     flag: '\u{1F6A9}',       // Triangular flag
     workspace: '\u{1F5C2}\uFE0F', // Card index dividers
+    subscribed: '\u{1F514}', // Bell
+    unsubscribed: '\u{1F515}', // Bell with slash
     other: '\u2699\uFE0F'     // Gear, for portal actions without a known emoji
   };
 
@@ -556,6 +745,10 @@ v0.8.4: - Updated @updateURL and @downloadURL
     flag.item.setAttribute('title', 'Flag this article');
     makeActionButton(flag.item, () => runNativeAction('flag'));
 
+    // Shown only when the bell is not on screen (narrow windows).
+    const subscribe = makeItem('a', 'subscribe', EMOJI.subscribed, 'Subscribe');
+    makeActionButton(subscribe.item, () => requestSubscriptionChange('item'));
+
     // Any other portal actions are mirrored here, in their menu order.
     const extra = document.createElement('span');
     extra.className = PREFIX + '-extra';
@@ -564,7 +757,7 @@ v0.8.4: - Updated @updateURL and @downloadURL
     workspace.item.target = '_new'; // Kept from the original Workspace link.
     workspace.item.setAttribute('title', 'Open this article in Workspace');
 
-    line1.append(number.item, copy.item, edit.item, flag.item, extra, workspace.item);
+    line1.append(number.item, copy.item, edit.item, flag.item, subscribe.item, extra, workspace.item);
 
     const line2 = document.createElement('div');
     line2.className = PREFIX + '-line ' + PREFIX + '-line2';
@@ -604,7 +797,8 @@ v0.8.4: - Updated @updateURL and @downloadURL
 
     return {
       header, numberText: number.label, copy: copy.item, edit: edit.item,
-      flag: flag.item, extra, extraSignature: null, workspace: workspace.item, articleLink
+      flag: flag.item, subscribe: subscribe.item, extra, extraSignature: null,
+      workspace: workspace.item, articleLink
     };
   }
 
@@ -667,7 +861,7 @@ v0.8.4: - Updated @updateURL and @downloadURL
     setHidden(edit, false);
   }
 
-  function updateHeader(parts, thisNumber, thisSysID, newTitle) {
+  function updateHeader(parts, thisNumber, thisSysID, newTitle, bell) {
     setText(parts.numberText, thisNumber);
     setAttributeIfChanged(parts.copy, 'href', buildArticleUrl(thisNumber));
     setAttributeIfChanged(parts.articleLink, 'href', buildArticleUrl(thisNumber));
@@ -680,6 +874,19 @@ v0.8.4: - Updated @updateURL and @downloadURL
 
     // Flag article only exists if the portal offers it.
     setHidden(parts.flag, !hasNative('flag'));
+
+    // Subscribe in line 1 only when neither the bell nor the portal's own
+    // button is on screen, e.g. on narrow windows.
+    const menuSubscribe = actions.find((action) => action.kind === 'subscribe');
+    const menuState = menuSubscribe ? subscriptionState(menuSubscribe.label) : null;
+    const showItem = !bell.shown && !bell.nativeShown && menuState !== null;
+    setHidden(parts.subscribe, !showItem);
+    if (showItem && !itemFeedback) {
+      setText(parts.subscribe.querySelector('.' + PREFIX + '-emoji'),
+        menuState ? EMOJI.unsubscribed : EMOJI.subscribed);
+      setText(parts.subscribe.querySelector('.' + PREFIX + '-label'),
+        menuState ? 'Unsubscribe' : 'Subscribe');
+    }
 
     // Other portal actions: rebuild only when the set of labels changes.
     const others = actions.filter((action) => action.kind === 'other');
@@ -753,7 +960,11 @@ v0.8.4: - Updated @updateURL and @downloadURL
     const parts = headerParts.get(header);
     if (!parts) return; // Header from another copy of this script; leave it.
 
-    updateHeader(parts, thisNumber, thisSysID, newTitle);
+    const bell = ensureBell(heading);
+    updateHeader(parts, thisNumber, thisSysID, newTitle, bell);
+    const menuSubscribe = nativeActions().find((action) => action.kind === 'subscribe');
+    confirmSubscription(bell.state !== null ? bell.state :
+      (menuSubscribe ? subscriptionState(menuSubscribe.label) : null));
     hideNativeNumberAndCopy(heading, numberInfo, header);
     applyResponsiveRow(heading, header);
     hideActionsMenu();
