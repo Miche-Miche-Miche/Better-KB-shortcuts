@@ -4,10 +4,11 @@ A [Tampermonkey](https://www.tampermonkey.net/) userscript that gives knowledge 
 
 - **Line 1:** 🔖 KB number · 📋 Copy link · ✏️ Edit article · 🚩 Flag article · 🗂️ Open in Workspace. The heart stays on the right; the Actions menu is hidden because line 1 replaces it.
 - **Line 2:** "KB number - title", linked to the article.
+- **🔔 Bell** next to the heart: empty when not subscribed, filled when subscribed. Click it to subscribe or unsubscribe.
 - **Edit article** opens the latest version, like the portal's own Edit.
 - The browser tab shows "KB number - title".
 
-The script never saves or changes anything in ServiceNow.
+The script never changes anything on its own; actions run only when you click them.
 
 ## Install
 
