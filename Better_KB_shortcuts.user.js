@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Better KB shortcuts
 // @namespace    local.servicenow.better-kb-shortcuts
-// @version      0.9.6
+// @version      0.9.10
 // @description  Adds copy, edit and Workspace shortcuts and a tidy, aligned header to knowledge portal articles.
 // @author       Miche (based on LPS KB Portal view by Lucas Vieites)
 // @homepageURL  https://github.com/Miche-Miche-Miche/Better-KB-shortcuts
@@ -15,16 +15,22 @@
 
 /*
 Better KB shortcuts: a tidier header for knowledge portal (/lps) articles.
-Line 1: KB number, Copy link, Edit article, Flag article, Open in Workspace.
+Line 1: Copy link, Edit article, Flag article, Open in Workspace as grey
+circles with blue line icons (Booking's icon style); hover for each name.
 Line 2: KB number and title, linked to the article.
-Bell next to the heart: subscribe or unsubscribe.
-Never saves anything automatically; changes occur only when you click an action.
+On the right, the heart and a bell (subscribe or unsubscribe), the same
+size as the line 1 icons and lined up with them.
+Never saves anything by itself: changes happen only when you click an action.
 Based on "LPS KB Portal view" v0.8.4 by Lucas Vieites:
 https://gist.github.com/lucasvieites/3e1543562b88b9f51c22fcd13c4ea1f9
 Maintainers: keep this note and the changelog up to date.
 */
 
 /** ChangeLog (newest first):
+v0.9.10: - Heart and bell match the size and alignment of the line 1 icons
+v0.9.9: - Bell drawn exactly the size of the heart; neither icon is shrunk
+v0.9.8: - Brand circles: line 1 actions, heart and bell as grey circles with blue icons
+v0.9.7: - Line icons instead of emojis; standalone KB number removed; bell lined up with the heart
 v0.9.6: - Subscribe button replaced by a bell next to the heart, with a short confirmation
 v0.9.5: - Shorter description and changelog
 v0.9.4: - Hide the Edit article link in the views and rating row
@@ -79,6 +85,21 @@ v0.1: - Initial release for the production and sub-production instances
     // when not subscribed, filled when subscribed. Set to false to keep the
     // portal's own button.
     SUBSCRIBE_AS_BELL: true,
+    // Colour of the line icons in line 1: Booking's Action Blue, which the
+    // brand reserves for links and buttons. Set to 'currentColor' to use the
+    // text colour instead.
+    ICON_COLOR: '#006ce4',
+    // How line 1 actions look:
+    // 'circles' - icon-only grey circles with blue icons (Booking's icon
+    //             style on white backgrounds); each name shows on hover or
+    //             keyboard focus. The heart and bell icons become circles
+    //             of the same size, centred on line 1's circles.
+    // 'links'   - icon followed by the name, as in v0.9.7.
+    ACTION_STYLE: 'circles',
+    // Circle size (pixels), its grey and its hover colour.
+    CIRCLE_SIZE_PX: 34,
+    CIRCLE_COLOR: '#f2f3f5',
+    CIRCLE_HOVER_COLOR: '#e6f0fc',
     // How long to wait for the portal to confirm a subscription change
     // before reporting that nothing changed (milliseconds).
     SUBSCRIBE_CONFIRM_MS: 8000,
@@ -192,8 +213,57 @@ v0.1: - Initial release for the production and sub-production instances
       .${PREFIX}-line { margin: 0; overflow-wrap: break-word; }
       .${PREFIX}-line + .${PREFIX}-line { margin-top: .25em; }
       .${PREFIX}-line1 { display: flex; flex-wrap: wrap; align-items: baseline; gap: .15em 1.25em; }
-      /* An item never breaks between its emoji and its text. */
+      /* An item never breaks between its icon and its text. */
       .${PREFIX}-item { white-space: nowrap; }
+      /* Line icons drawn with SVG: sized to the text, aligned with it. */
+      .${PREFIX}-icon {
+        display: inline-block; width: 1.05em; height: 1.05em; margin-right: .35em;
+        vertical-align: -.15em; color: ${CONFIG.ICON_COLOR};
+        fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round;
+      }
+      .${PREFIX}-toast .${PREFIX}-icon { color: currentColor; margin-right: .3em; }
+      /* Brand circles (ACTION_STYLE 'circles'). Each action is a grey circle
+         with a blue icon; its name becomes a tooltip below it, still read by
+         screen readers as the link's name. */
+      .${PREFIX}-circles .${PREFIX}-line1 { align-items: center; gap: 8px; }
+      .${PREFIX}-circles .${PREFIX}-item {
+        position: relative; display: inline-flex; align-items: center; justify-content: center;
+        width: ${CONFIG.CIRCLE_SIZE_PX}px; height: ${CONFIG.CIRCLE_SIZE_PX}px; border-radius: 50%;
+        background: ${CONFIG.CIRCLE_COLOR}; text-decoration: none;
+      }
+      .${PREFIX}-circles .${PREFIX}-item:hover, .${PREFIX}-circles .${PREFIX}-item:focus-visible {
+        background: ${CONFIG.CIRCLE_HOVER_COLOR}; text-decoration: none;
+      }
+      .${PREFIX}-circles .${PREFIX}-item .${PREFIX}-icon { width: 17px; height: 17px; margin: 0; vertical-align: 0; }
+      .${PREFIX}-circles .${PREFIX}-label {
+        position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 1000;
+        white-space: nowrap; padding: 3px 8px; border-radius: 5px; font-size: 12px; font-weight: 400;
+        line-height: 1.4; background: #1a1a1a; color: #fff; opacity: 0; pointer-events: none;
+        transition: opacity .12s;
+      }
+      .${PREFIX}-circles .${PREFIX}-item:hover .${PREFIX}-label,
+      .${PREFIX}-circles .${PREFIX}-item:focus-visible .${PREFIX}-label,
+      .${PREFIX}-circles .${PREFIX}-flash .${PREFIX}-label { opacity: 1; }
+      /* Heart and bell side by side on the right. Each icon element (the
+         portal's heart and the script's bell) is itself drawn as a circle the
+         same size as line 1's circles, with its glyph at line 1's icon size.
+         The heart is restyled, never moved or replaced, so favouriting still
+         works. alignFavWithLine1() sets "top" so the circles share line 1's
+         centre line. !important: the portal's icon font rules set their own
+         size, line height and spacing. */
+      .${PREFIX}-fav-row { display: inline-flex; align-items: center; gap: 8px; }
+      .${PREFIX}-fav-icon {
+        position: relative; display: inline-flex !important; align-items: center; justify-content: center;
+        box-sizing: border-box !important;
+        width: ${CONFIG.CIRCLE_SIZE_PX}px !important; height: ${CONFIG.CIRCLE_SIZE_PX}px !important;
+        margin: 0 !important; padding: 0 !important; border-radius: 50%;
+        font-size: 17px !important; line-height: 1 !important; vertical-align: middle;
+        background: ${CONFIG.CIRCLE_COLOR}; cursor: pointer;
+      }
+      .${PREFIX}-fav-icon:hover, :focus-visible > .${PREFIX}-fav-icon { background: ${CONFIG.CIRCLE_HOVER_COLOR}; }
+      .${PREFIX}-bell.${PREFIX}-bell-flat { display: inline-flex; padding: 0; line-height: 0; }
+      .${PREFIX}-fav-row .${PREFIX}-bell-wrap { display: inline-flex; margin-left: 0; }
+      @media (prefers-reduced-motion: reduce) { .${PREFIX}-circles .${PREFIX}-label { transition: none; } }
       /* The wrapper of mirrored portal actions adds no box of its own, so its
          items space and wrap like the other line 1 items. */
       .${PREFIX}-extra { display: contents; }
@@ -215,6 +285,8 @@ v0.1: - Initial release for the production and sub-production instances
       /* Subscription bell: sized and coloured like the heart (copied at run
          time); the confirmation floats below it without moving anything. */
       .${PREFIX}-bell-wrap { position: relative; display: inline-block; vertical-align: middle; margin-left: .5rem; }
+      /* alignFavWithLine1() sets "top" so the bell's centre matches line 1's
+         circles (or the heart's), whatever markup and line height each has. */
       /* Defaults close to the heart; the heart's real size and colour are
          copied onto the icon when the heart can be found. */
       .${PREFIX}-bell { background: none; border: 0; padding: 0 .2em; margin: 0; cursor: pointer; color: #006ce4; font-size: 2.2rem; line-height: 1; }
@@ -392,7 +464,7 @@ v0.1: - Initial release for the production and sub-production instances
     const control = subscribeControl();
     const from = control ? subscriptionState(control.textContent) : null;
     if (from === null) {
-      notifySubscription(where, EMOJI.copyFailed, 'Subscription unavailable');
+      notifySubscription(where, 'copyFailed', 'Subscription unavailable');
       return;
     }
     subscription.pending = { from, where };
@@ -401,7 +473,7 @@ v0.1: - Initial release for the production and sub-production instances
       if (!subscription.pending) return;
       const pending = subscription.pending;
       subscription.pending = null;
-      notifySubscription(pending.where, EMOJI.copyFailed, 'Subscription not changed');
+      notifySubscription(pending.where, 'copyFailed', 'Subscription not changed');
     }, CONFIG.SUBSCRIBE_CONFIRM_MS);
     control.click(); // The portal's own action does the change.
   }
@@ -412,7 +484,7 @@ v0.1: - Initial release for the production and sub-production instances
     if (!pending || state === null || state === pending.from) return;
     subscription.pending = null;
     window.clearTimeout(subscription.timer);
-    notifySubscription(pending.where, state ? EMOJI.subscribed : EMOJI.unsubscribed,
+    notifySubscription(pending.where, state ? 'subscribed' : 'unsubscribed',
       state ? 'Subscribed' : 'Unsubscribed');
   }
 
@@ -424,7 +496,7 @@ v0.1: - Initial release for the production and sub-production instances
       const toast = document.querySelector('.' + PREFIX + '-toast');
       if (!toast) return;
       window.clearTimeout(toastTimer);
-      toast.textContent = symbol + ' ' + text;
+      toast.replaceChildren(makeIcon(symbol), document.createTextNode(text));
       toast.hidden = false;
       toastTimer = window.setTimeout(() => { toast.hidden = true; }, CONFIG.COPIED_FEEDBACK_MS);
       return;
@@ -432,11 +504,13 @@ v0.1: - Initial release for the production and sub-production instances
     const item = document.querySelector('.' + PREFIX + '-subscribe');
     if (!item) return;
     itemFeedback = true;
-    item.querySelector('.' + PREFIX + '-emoji').textContent = symbol;
+    setItemIcon(item, symbol);
     item.querySelector('.' + PREFIX + '-label').textContent = text;
+    addClass(item, PREFIX + '-flash');
     window.clearTimeout(toastTimer);
     toastTimer = window.setTimeout(() => {
       itemFeedback = false;
+      removeClass(item, PREFIX + '-flash');
       scheduleCheck(); // Restores the item's normal label.
     }, CONFIG.COPIED_FEEDBACK_MS);
   }
@@ -477,17 +551,78 @@ v0.1: - Initial release for the production and sub-production instances
     return candidate.querySelector('i, svg, [class*="heart"]') || candidate;
   }
 
-  // Copy the heart's on-screen size and colour so the bell matches it.
+  // Copy the heart's colour, font size and line height so the bell is drawn
+  // the same size. The font size is used (not the box height), because the
+  // heart's box includes line spacing and made the bell too big.
   function matchHeart(heading, icon) {
     const heart = findHeart(heading);
-    if (!heart) return;
-    const color = getComputedStyle(heart).getPropertyValue('color');
-    if (color && icon.style.getPropertyValue('color') !== color) icon.style.setProperty('color', color);
-    const height = heart.getBoundingClientRect().height;
-    if (height > 8) {
-      const size = Math.round(height) + 'px';
-      if (icon.style.getPropertyValue('font-size') !== size) icon.style.setProperty('font-size', size);
+    if (!heart) return null;
+    const computed = getComputedStyle(heart);
+    for (const property of ['color', 'font-size', 'line-height']) {
+      const value = computed.getPropertyValue(property);
+      if (value && icon.style.getPropertyValue(property) !== value) icon.style.setProperty(property, value);
     }
+    return heart;
+  }
+
+  // Line 1 style circles for the heart and bell icons. Only an icon-font
+  // element (<i>) can be drawn as a circle this way; otherwise both keep the
+  // heart's own look, so the two always match.
+  function applyFavCircles(heading, heart, wrap, bellButton, bellIcon) {
+    const on = CONFIG.ACTION_STYLE === 'circles' && !!heart && heart.tagName === 'I';
+    for (const element of [heart, bellIcon]) {
+      if (!element) continue;
+      if (on) addClass(element, PREFIX + '-fav-icon');
+      else removeClass(element, PREFIX + '-fav-icon');
+    }
+    if (on) addClass(bellButton, PREFIX + '-bell-flat');
+    else removeClass(bellButton, PREFIX + '-bell-flat');
+    // Their common parent becomes a centred row, so they share one centre line.
+    const row = heart && wrap ? commonAncestor(heart, wrap) : null;
+    if (row && row !== heading && heading.contains(row) && !row.contains(heading.querySelector('.' + PREFIX + '-header'))) {
+      if (on) addClass(row, PREFIX + '-fav-row');
+      else removeClass(row, PREFIX + '-fav-row');
+    }
+    return on;
+  }
+
+  // Move `moved` vertically (via "top") so the centre of `measured` (itself
+  // or an element inside it) is at targetY. Only written when it changes by
+  // more than half a pixel, so it cannot loop. Returns false (and clears the
+  // offset) when it is further away than one circle, i.e. on another row
+  // (narrow windows).
+  function centreAt(measured, moved, targetY) {
+    const box = measured.getBoundingClientRect();
+    const current = parseFloat(moved.style.top) || 0;
+    const natural = box.top - current + box.height / 2;
+    if (Math.abs(targetY - natural) > CONFIG.CIRCLE_SIZE_PX) {
+      if (moved.style.top) moved.style.top = '';
+      return false;
+    }
+    const top = Math.round((targetY - natural) * 100) / 100;
+    if (Math.abs(top - current) > 0.5) moved.style.top = top + 'px';
+    return true;
+  }
+
+  // Line the heart and bell up with line 1's circles (the Copy link circle).
+  // Without line 1 on screen, the bell lines up with the heart instead.
+  function alignFavWithLine1(heading, heart, wrap, bellIcon) {
+    if (!heart || !isRendered(heart) || !isRendered(bellIcon)) return;
+    const reference = heading.querySelector('.' + PREFIX + '-circles .' + PREFIX + '-copy');
+    if (CONFIG.ACTION_STYLE === 'circles' && isRendered(reference)) {
+      const box = reference.getBoundingClientRect();
+      const targetY = box.top + box.height / 2;
+      if (centreAt(heart, heart, targetY)) {
+        centreAt(bellIcon, wrap, targetY);
+        return;
+      }
+    }
+    const heartBox = heart.getBoundingClientRect();
+    const iconBox = bellIcon.getBoundingClientRect();
+    const difference = (heartBox.top + heartBox.height / 2) - (iconBox.top + iconBox.height / 2);
+    if (Math.abs(difference) <= 0.5) return;
+    const current = parseFloat(wrap.style.top) || 0;
+    wrap.style.top = Math.round((current + difference) * 100) / 100 + 'px';
   }
 
   // Replace (visually) the portal's subscribe button with a bell. The
@@ -512,12 +647,17 @@ v0.1: - Initial release for the production and sub-production instances
 
     const button = wrap.querySelector('.' + PREFIX + '-bell');
     const icon = button.querySelector('i');
-    setAttributeIfChanged(icon, 'class', state ? 'fa fa-bell' : 'fa fa-bell-o');
+    // Switch only the bell glyph classes, so the circle class is kept.
+    addClass(icon, 'fa');
+    addClass(icon, state ? 'fa-bell' : 'fa-bell-o');
+    removeClass(icon, state ? 'fa-bell-o' : 'fa-bell');
     const label = state ? 'Unsubscribe from this article' : 'Subscribe to this article';
     setAttributeIfChanged(button, 'aria-label', label);
     setAttributeIfChanged(button, 'title', label);
     setAttributeIfChanged(button, 'aria-pressed', String(state));
-    matchHeart(heading, icon);
+    const heart = matchHeart(heading, icon);
+    applyFavCircles(heading, heart, wrap, button, icon);
+    alignFavWithLine1(heading, heart, wrap, icon);
     return { state, shown: isRendered(wrap), nativeShown: false };
   }
 
@@ -652,20 +792,55 @@ v0.1: - Initial release for the production and sub-production instances
     if (element.getAttribute(name) !== value) element.setAttribute(name, value);
   }
 
-  // One line 1 item: exactly one emoji, one space, then the text. The emoji
-  // is hidden from screen readers so the item is announced by its text.
-  function makeItem(tag, className, symbol, text) {
+  // Line icons on a 24 x 24 grid (the same style as Better KB editor),
+  // drawn with currentColor. Built as SVG elements, never as markup strings.
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const ICONS = {
+    copy: [['rect', { x: 9, y: 9, width: 11, height: 11, rx: 2 }], ['path', { d: 'M5 15V5a2 2 0 0 1 2-2h8' }]],
+    copied: [['path', { d: 'M5 12.5l4.5 4.5L19 7' }]],
+    copyFailed: [['path', { d: 'M12 3 2 20h20L12 3z' }], ['path', { d: 'M12 10v4M12 17h.01' }]],
+    edit: [['path', { d: 'M4 20h4L19 9l-4-4L4 16v4z' }], ['path', { d: 'M13.5 6.5l4 4' }]],
+    flag: [['path', { d: 'M5 21V4' }], ['path', { d: 'M5 4h11l-2 4 2 4H5' }]],
+    workspace: [['rect', { x: 3, y: 4, width: 18, height: 16, rx: 2 }], ['path', { d: 'M9 4v16M9 10h12' }]],
+    subscribed: [['path', { d: 'M6 16V11a6 6 0 0 1 12 0v5l2 2H4l2-2z' }], ['path', { d: 'M10 20a2 2 0 0 0 4 0' }]],
+    unsubscribed: [['path', { d: 'M6 16V11a6 6 0 0 1 9.5-4.9M18 11v5l2 2H8' }], ['path', { d: 'M10 20a2 2 0 0 0 4 0M3 3l18 18' }]],
+    other: [['circle', { cx: 12, cy: 12, r: 3 }], ['path', { d: 'M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1' }]]
+  };
+
+  function makeIcon(name) {
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('class', PREFIX + '-icon');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    svg.dataset.icon = name;
+    for (const [tag, attributes] of ICONS[name] || ICONS.other) {
+      const shape = document.createElementNS(SVG_NS, tag);
+      for (const [key, value] of Object.entries(attributes)) shape.setAttribute(key, String(value));
+      svg.appendChild(shape);
+    }
+    return svg;
+  }
+
+  // Swap an item's icon only when it changes.
+  function setItemIcon(item, name) {
+    const current = item.querySelector('.' + PREFIX + '-icon');
+    if (current && current.dataset.icon === name) return;
+    const icon = makeIcon(name);
+    if (current) current.replaceWith(icon);
+    else item.prepend(icon);
+  }
+
+  // One line 1 item: an icon, then the text. The icon is hidden from screen
+  // readers so the item is announced by its text.
+  function makeItem(tag, className, iconName, text) {
     const item = document.createElement(tag);
     item.className = PREFIX + '-item ' + PREFIX + '-' + className;
-    const emoji = document.createElement('span');
-    emoji.className = PREFIX + '-emoji';
-    emoji.setAttribute('aria-hidden', 'true');
-    emoji.textContent = symbol;
     const label = document.createElement('span');
     label.className = PREFIX + '-label';
     label.textContent = text;
-    item.append(emoji, document.createTextNode(' '), label);
-    return { item, emoji, label };
+    item.append(makeIcon(iconName), label);
+    return { item, label };
   }
 
   // Make an anchor behave as a button for a portal action: focusable, Enter
@@ -684,19 +859,6 @@ v0.1: - Initial release for the production and sub-production instances
       }
     });
   }
-
-  const EMOJI = {
-    number: '\u{1F516}',     // Bookmark
-    copy: '\u{1F4CB}',       // Clipboard
-    copied: '\u2705',        // Check mark
-    copyFailed: '\u26A0\uFE0F', // Warning
-    edit: '\u270F\uFE0F',     // Pencil
-    flag: '\u{1F6A9}',       // Triangular flag
-    workspace: '\u{1F5C2}\uFE0F', // Card index dividers
-    subscribed: '\u{1F514}', // Bell
-    unsubscribed: '\u{1F515}', // Bell with slash
-    other: '\u2699\uFE0F'     // Gear, for portal actions without a known emoji
-  };
 
   // GM_setClipboard needs no page focus or clipboard permission; the standard
   // Clipboard API is a fallback if the grant is unavailable.
@@ -720,18 +882,16 @@ v0.1: - Initial release for the production and sub-production instances
   function buildHeader() {
     const header = document.createElement('div');
     header.id = PREFIX + '-header';
-    header.className = PREFIX + '-header';
+    header.className = PREFIX + '-header' + (CONFIG.ACTION_STYLE === 'circles' ? ' ' + PREFIX + '-circles' : '');
 
     const line1 = document.createElement('div');
     line1.className = PREFIX + '-line ' + PREFIX + '-line1';
 
-    const number = makeItem('span', 'number', EMOJI.number, '');
-
-    const copy = makeItem('a', 'copy', EMOJI.copy, 'Copy link');
+    const copy = makeItem('a', 'copy', 'copy', 'Copy link');
     copy.item.setAttribute('title', 'Copy the article link');
     copy.label.setAttribute('aria-live', 'polite');
 
-    const edit = makeItem('a', 'edit', EMOJI.edit, 'Edit article');
+    const edit = makeItem('a', 'edit', 'edit', 'Edit article');
     edit.item.setAttribute('title', 'Edit this article');
     edit.item.addEventListener('click', (event) => {
       // Portal mode: run the portal's own Edit action instead of navigating.
@@ -741,23 +901,28 @@ v0.1: - Initial release for the production and sub-production instances
       }
     });
 
-    const flag = makeItem('a', 'flag', EMOJI.flag, 'Flag article');
+    const flag = makeItem('a', 'flag', 'flag', 'Flag article');
     flag.item.setAttribute('title', 'Flag this article');
     makeActionButton(flag.item, () => runNativeAction('flag'));
 
     // Shown only when the bell is not on screen (narrow windows).
-    const subscribe = makeItem('a', 'subscribe', EMOJI.subscribed, 'Subscribe');
+    const subscribe = makeItem('a', 'subscribe', 'subscribed', 'Subscribe');
     makeActionButton(subscribe.item, () => requestSubscriptionChange('item'));
 
     // Any other portal actions are mirrored here, in their menu order.
     const extra = document.createElement('span');
     extra.className = PREFIX + '-extra';
 
-    const workspace = makeItem('a', 'workspace', EMOJI.workspace, 'Open in Workspace');
+    const workspace = makeItem('a', 'workspace', 'workspace', 'Open in Workspace');
     workspace.item.target = '_new'; // Kept from the original Workspace link.
     workspace.item.setAttribute('title', 'Open this article in Workspace');
 
-    line1.append(number.item, copy.item, edit.item, flag.item, subscribe.item, extra, workspace.item);
+    line1.append(copy.item, edit.item, flag.item, subscribe.item, extra, workspace.item);
+    // Circles show their own tooltip (the name); a browser tooltip as well
+    // would appear on top of it.
+    if (CONFIG.ACTION_STYLE === 'circles') {
+      for (const item of [copy.item, edit.item, flag.item, workspace.item]) item.removeAttribute('title');
+    }
 
     const line2 = document.createElement('div');
     line2.className = PREFIX + '-line ' + PREFIX + '-line2';
@@ -777,26 +942,29 @@ v0.1: - Initial release for the production and sub-production instances
       const url = copy.item.getAttribute('href');
       if (!url) return;
       copyText(url).then(
-        () => showFeedback(EMOJI.copied, 'Copied'),
+        () => showFeedback('copied', 'Copied'),
         (error) => {
           console.warn(LOG_PREFIX + 'Copy link failed: ' + (error && error.name ? error.name : 'unknown error'));
-          showFeedback(EMOJI.copyFailed, 'Copy failed');
+          showFeedback('copyFailed', 'Copy failed');
         }
       );
     });
 
-    function showFeedback(symbol, text) {
+    // The tooltip stays visible while "Copied" shows (circles style).
+    function showFeedback(iconName, text) {
       window.clearTimeout(feedbackTimer);
-      copy.emoji.textContent = symbol;
+      setItemIcon(copy.item, iconName);
       copy.label.textContent = text;
+      addClass(copy.item, PREFIX + '-flash');
       feedbackTimer = window.setTimeout(() => {
-        copy.emoji.textContent = EMOJI.copy;
+        setItemIcon(copy.item, 'copy');
         copy.label.textContent = 'Copy link';
+        removeClass(copy.item, PREFIX + '-flash');
       }, CONFIG.COPIED_FEEDBACK_MS);
     }
 
     return {
-      header, numberText: number.label, copy: copy.item, edit: edit.item,
+      header, copy: copy.item, edit: edit.item,
       flag: flag.item, subscribe: subscribe.item, extra, extraSignature: null,
       workspace: workspace.item, articleLink
     };
@@ -862,7 +1030,6 @@ v0.1: - Initial release for the production and sub-production instances
   }
 
   function updateHeader(parts, thisNumber, thisSysID, newTitle, bell) {
-    setText(parts.numberText, thisNumber);
     setAttributeIfChanged(parts.copy, 'href', buildArticleUrl(thisNumber));
     setAttributeIfChanged(parts.articleLink, 'href', buildArticleUrl(thisNumber));
     setText(parts.articleLink, newTitle || thisNumber);
@@ -882,8 +1049,7 @@ v0.1: - Initial release for the production and sub-production instances
     const showItem = !bell.shown && !bell.nativeShown && menuState !== null;
     setHidden(parts.subscribe, !showItem);
     if (showItem && !itemFeedback) {
-      setText(parts.subscribe.querySelector('.' + PREFIX + '-emoji'),
-        menuState ? EMOJI.unsubscribed : EMOJI.subscribed);
+      setItemIcon(parts.subscribe, menuState ? 'unsubscribed' : 'subscribed');
       setText(parts.subscribe.querySelector('.' + PREFIX + '-label'),
         menuState ? 'Unsubscribe' : 'Subscribe');
     }
@@ -894,7 +1060,7 @@ v0.1: - Initial release for the production and sub-production instances
     if (signature !== parts.extraSignature) {
       parts.extraSignature = signature;
       const items = others.map((action) => {
-        const mirrored = makeItem('a', 'other', EMOJI.other, action.label);
+        const mirrored = makeItem('a', 'other', 'other', action.label);
         makeActionButton(mirrored.item, () => runNativeAction('other', action.label));
         return mirrored.item;
       });
