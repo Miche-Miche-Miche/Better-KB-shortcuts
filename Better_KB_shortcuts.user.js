@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Better KB shortcuts
 // @namespace    local.servicenow.better-kb-shortcuts
-// @version      0.9.10
+// @version      0.9.11
 // @description  Adds copy, edit and Workspace shortcuts and a tidy, aligned header to knowledge portal articles.
 // @author       Miche (based on LPS KB Portal view by Lucas Vieites)
 // @homepageURL  https://github.com/Miche-Miche-Miche/Better-KB-shortcuts
@@ -27,6 +27,7 @@ Maintainers: keep this note and the changelog up to date.
 */
 
 /** ChangeLog (newest first):
+v0.9.11: - Heart and bell circles on every article, also without a subscribe button by the heart
 v0.9.10: - Heart and bell match the size and alignment of the line 1 icons
 v0.9.9: - Bell drawn exactly the size of the heart; neither icon is shrunk
 v0.9.8: - Brand circles: line 1 actions, heart and bell as grey circles with blue icons
@@ -261,6 +262,11 @@ v0.1: - Initial release for the production and sub-production instances
         background: ${CONFIG.CIRCLE_COLOR}; cursor: pointer;
       }
       .${PREFIX}-fav-icon:hover, :focus-visible > .${PREFIX}-fav-icon { background: ${CONFIG.CIRCLE_HOVER_COLOR}; }
+      /* An SVG or image heart inside its circle: line 1's icon size. */
+      .${PREFIX}-fav-icon > svg, .${PREFIX}-fav-icon > img {
+        width: 17px !important; height: 17px !important; margin: 0 !important;
+      }
+      .${PREFIX}-bell[aria-disabled="true"] { cursor: default; opacity: .55; }
       .${PREFIX}-bell.${PREFIX}-bell-flat { display: inline-flex; padding: 0; line-height: 0; }
       .${PREFIX}-fav-row .${PREFIX}-bell-wrap { display: inline-flex; margin-left: 0; }
       @media (prefers-reduced-motion: reduce) { .${PREFIX}-circles .${PREFIX}-label { transition: none; } }
@@ -436,14 +442,25 @@ v0.1: - Initial release for the production and sub-production instances
   // "Subscribed" (or "Unsubscribe" while hovered) when subscribed. Any other
   // wording returns null, and the portal's own button is then left alone.
   function subscriptionState(text) {
+    // "Subscribed ..." starts with "Subscribe", so it is tested first.
     const label = String(text || '').replace(/\s+/g, ' ').trim();
-    if (/^(subscribed|unsubscribe)$/i.test(label)) return true;
-    if (/^subscribe$/i.test(label)) return false;
+    if (/^(subscribed|unsubscribe)\b/i.test(label)) return true;
+    if (/^subscribe\b/i.test(label)) return false;
     return null;
   }
 
+  // Articles differ: some have the portal's button.kb-subscribe by the
+  // heart, others another control or none at all. Only the article header is
+  // searched (never the Actions menu, line 1 or the bell), so a subscribe
+  // link elsewhere on the page (e.g. for a whole knowledge base) is ignored.
   function findSubscribeButton(heading) {
-    return heading.querySelector('button.kb-subscribe');
+    const classic = heading.querySelector('button.kb-subscribe');
+    if (classic) return classic;
+    const menu = document.getElementById('kbActionMenuList');
+    return [...heading.querySelectorAll('button, a, [role="button"]')].find((control) =>
+      !control.closest('.' + PREFIX + '-header, .' + PREFIX + '-bell-wrap') &&
+      !(menu && menu.contains(control)) &&
+      subscriptionState(control.textContent) !== null) || null;
   }
 
   // The control that changes the subscription: the button by the heart, or
@@ -551,6 +568,28 @@ v0.1: - Initial release for the production and sub-production instances
     return candidate.querySelector('i, svg, [class*="heart"]') || candidate;
   }
 
+  // The heart's drawn icon, the element drawn as a circle ("host") and the
+  // control the bell goes after. An icon-font heart (<i> or <span>) is its
+  // own circle, as in v0.9.10. An SVG or image heart is circled through the
+  // control or wrapper holding only that icon; if there is none, the heart
+  // keeps its own look rather than restyling something larger.
+  function findHeartParts(heading) {
+    const icon = findHeart(heading);
+    if (!icon) return null;
+    const control = icon.closest('button, a, [role="button"]');
+    const outer = control && heading.contains(control) ? control : icon;
+    let host = null;
+    if (icon.tagName === 'I' || icon.tagName === 'SPAN') {
+      host = icon;
+    } else if (outer !== icon && !normalisedText(outer)) {
+      host = outer;
+    } else if (icon.parentElement && icon.parentElement !== heading &&
+        icon.parentElement.children.length === 1 && !normalisedText(icon.parentElement)) {
+      host = icon.parentElement;
+    }
+    return { icon, host, outer };
+  }
+
   // Copy the heart's colour, font size and line height so the bell is drawn
   // the same size. The font size is used (not the box height), because the
   // heart's box includes line spacing and made the bell too big.
@@ -565,25 +604,32 @@ v0.1: - Initial release for the production and sub-production instances
     return heart;
   }
 
-  // Line 1 style circles for the heart and bell icons. Only an icon-font
-  // element (<i>) can be drawn as a circle this way; otherwise both keep the
-  // heart's own look, so the two always match.
-  function applyFavCircles(heading, heart, wrap, bellButton, bellIcon) {
-    const on = CONFIG.ACTION_STYLE === 'circles' && !!heart && heart.tagName === 'I';
-    for (const element of [heart, bellIcon]) {
+  // Line 1 style circles for the heart and bell. The bell is always a
+  // circle in the circles style; the heart whenever it has a host (see
+  // findHeartParts). Each is set independently, so a missing subscribe
+  // button can no longer leave the heart large and plain.
+  function applyFavCircles(heading, heartParts, wrap, bellButton, bellIcon) {
+    const circles = CONFIG.ACTION_STYLE === 'circles';
+    const host = heartParts && heartParts.host;
+    for (const element of heading.querySelectorAll('.' + PREFIX + '-fav-icon')) {
+      if (element !== host && element !== bellIcon) removeClass(element, PREFIX + '-fav-icon');
+    }
+    for (const element of [host, bellIcon]) {
       if (!element) continue;
-      if (on) addClass(element, PREFIX + '-fav-icon');
+      if (circles) addClass(element, PREFIX + '-fav-icon');
       else removeClass(element, PREFIX + '-fav-icon');
     }
-    if (on) addClass(bellButton, PREFIX + '-bell-flat');
-    else removeClass(bellButton, PREFIX + '-bell-flat');
+    if (bellButton) {
+      if (circles) addClass(bellButton, PREFIX + '-bell-flat');
+      else removeClass(bellButton, PREFIX + '-bell-flat');
+    }
     // Their common parent becomes a centred row, so they share one centre line.
-    const row = heart && wrap ? commonAncestor(heart, wrap) : null;
+    const heartOuter = heartParts && heartParts.outer;
+    const row = heartOuter && wrap ? commonAncestor(heartOuter, wrap) : null;
     if (row && row !== heading && heading.contains(row) && !row.contains(heading.querySelector('.' + PREFIX + '-header'))) {
-      if (on) addClass(row, PREFIX + '-fav-row');
+      if (circles) addClass(row, PREFIX + '-fav-row');
       else removeClass(row, PREFIX + '-fav-row');
     }
-    return on;
   }
 
   // Move `moved` vertically (via "top") so the centre of `measured` (itself
@@ -605,18 +651,24 @@ v0.1: - Initial release for the production and sub-production instances
   }
 
   // Line the heart and bell up with line 1's circles (the Copy link circle).
-  // Without line 1 on screen, the bell lines up with the heart instead.
+  // Without line 1 on screen, or when the heart is on another row, the bell
+  // lines up with the heart instead. `heart` is the element moved and
+  // measured for the heart (its circle, or the icon when it has none).
   function alignFavWithLine1(heading, heart, wrap, bellIcon) {
-    if (!heart || !isRendered(heart) || !isRendered(bellIcon)) return;
+    if (!wrap || !isRendered(bellIcon)) return;
+    const heartShown = !!heart && isRendered(heart);
     const reference = heading.querySelector('.' + PREFIX + '-circles .' + PREFIX + '-copy');
     if (CONFIG.ACTION_STYLE === 'circles' && isRendered(reference)) {
       const box = reference.getBoundingClientRect();
       const targetY = box.top + box.height / 2;
-      if (centreAt(heart, heart, targetY)) {
+      const heartOnLine = heartShown && heart.classList.contains(PREFIX + '-fav-icon')
+        ? centreAt(heart, heart, targetY) : !heartShown;
+      if (heartOnLine) {
         centreAt(bellIcon, wrap, targetY);
         return;
       }
     }
+    if (!heartShown) return;
     const heartBox = heart.getBoundingClientRect();
     const iconBox = bellIcon.getBoundingClientRect();
     const difference = (heartBox.top + heartBox.height / 2) - (iconBox.top + iconBox.height / 2);
@@ -625,25 +677,33 @@ v0.1: - Initial release for the production and sub-production instances
     wrap.style.top = Math.round((current + difference) * 100) / 100 + 'px';
   }
 
-  // Replace (visually) the portal's subscribe button with a bell. The
-  // portal's button stays in the page, hidden, and still does the work.
+  // Show a bell next to the heart on every article. Its state comes from
+  // the portal's subscribe button when there is one (which stays in the
+  // page, hidden, and still does the work), otherwise from the Actions menu
+  // item. With neither, the bell is empty and says subscription is not
+  // available; clicking it then only explains that.
   // Returns the current state and whether the bell is on screen.
   function ensureBell(heading) {
+    const heartParts = findHeartParts(heading);
     const nativeButton = findSubscribeButton(heading);
-    const state = nativeButton ? subscriptionState(nativeButton.textContent) : null;
+    const nativeState = nativeButton ? subscriptionState(nativeButton.textContent) : null;
+    const menuItem = nativeActions().find((action) => action.kind === 'subscribe');
+    const menuState = menuItem ? subscriptionState(menuItem.label) : null;
     let wrap = heading.querySelector('.' + PREFIX + '-bell-wrap');
-    if (!CONFIG.SUBSCRIBE_AS_BELL || !nativeButton || state === null) {
+    const anchor = nativeButton || (heartParts && heartParts.outer);
+    if (!CONFIG.SUBSCRIBE_AS_BELL || !anchor || !anchor.parentNode) {
       if (wrap) wrap.remove();
       if (nativeButton) removeClass(nativeButton, PREFIX + '-native-hidden');
-      return { state, shown: false, nativeShown: isRendered(nativeButton) };
+      applyFavCircles(heading, heartParts, null, null, null);
+      return { state: nativeButton ? nativeState : menuState, shown: false, nativeShown: isRendered(nativeButton) };
     }
+    const state = nativeButton ? nativeState : menuState;
     if (!wrap) wrap = buildBell();
-    // Sit exactly where the portal's button is, so the bell follows its
-    // layout (including being hidden on narrow windows, like the button).
-    if (nativeButton.nextSibling !== wrap) {
-      nativeButton.parentNode.insertBefore(wrap, nativeButton.nextSibling);
-    }
-    addClass(nativeButton, PREFIX + '-native-hidden');
+    // Sit right after the portal's button (so the bell follows its layout,
+    // including being hidden on narrow windows) or, without one, right after
+    // the heart's control (never inside it).
+    if (anchor.nextSibling !== wrap) anchor.parentNode.insertBefore(wrap, anchor.nextSibling);
+    if (nativeButton) addClass(nativeButton, PREFIX + '-native-hidden');
 
     const button = wrap.querySelector('.' + PREFIX + '-bell');
     const icon = button.querySelector('i');
@@ -651,13 +711,21 @@ v0.1: - Initial release for the production and sub-production instances
     addClass(icon, 'fa');
     addClass(icon, state ? 'fa-bell' : 'fa-bell-o');
     removeClass(icon, state ? 'fa-bell-o' : 'fa-bell');
-    const label = state ? 'Unsubscribe from this article' : 'Subscribe to this article';
+    const label = state === null ? 'Subscription is not available for this article' :
+      (state ? 'Unsubscribe from this article' : 'Subscribe to this article');
     setAttributeIfChanged(button, 'aria-label', label);
     setAttributeIfChanged(button, 'title', label);
-    setAttributeIfChanged(button, 'aria-pressed', String(state));
-    const heart = matchHeart(heading, icon);
-    applyFavCircles(heading, heart, wrap, button, icon);
-    alignFavWithLine1(heading, heart, wrap, icon);
+    if (state === null) {
+      if (button.hasAttribute('aria-pressed')) button.removeAttribute('aria-pressed');
+      setAttributeIfChanged(button, 'aria-disabled', 'true');
+    } else {
+      setAttributeIfChanged(button, 'aria-pressed', String(state));
+      if (button.hasAttribute('aria-disabled')) button.removeAttribute('aria-disabled');
+    }
+    matchHeart(heading, icon);
+    applyFavCircles(heading, heartParts, wrap, button, icon);
+    const heartMoved = heartParts ? (heartParts.host || heartParts.icon) : null;
+    alignFavWithLine1(heading, heartMoved, wrap, icon);
     return { state, shown: isRendered(wrap), nativeShown: false };
   }
 
