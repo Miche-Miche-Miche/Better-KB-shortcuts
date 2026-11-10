@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Better KB shortcuts
 // @namespace    local.servicenow.better-kb-shortcuts
-// @version      0.9.11
+// @version      0.9.12
 // @description  Adds copy, edit and Workspace shortcuts and a tidy, aligned header to knowledge portal articles.
 // @author       Miche (based on LPS KB Portal view by Lucas Vieites)
 // @homepageURL  https://github.com/Miche-Miche-Miche/Better-KB-shortcuts
@@ -27,6 +27,7 @@ Maintainers: keep this note and the changelog up to date.
 */
 
 /** ChangeLog (newest first):
+v0.9.12: - Title taken from the article's own title, not a heading in the article text
 v0.9.11: - Heart and bell circles on every article, also without a subscribe button by the heart
 v0.9.10: - Heart and bell match the size and alignment of the line 1 icons
 v0.9.9: - Bell drawn exactly the size of the heart; neither icon is shrunk
@@ -315,12 +316,23 @@ v0.1: - Initial release for the production and sub-production instances
     return headings.find(isRendered) || headings[0] || null;
   }
 
-  // The article title heading in the same article panel (not modal headings).
+  // The article's own title, in the same article panel as the header. The
+  // portal marks it with kb-title-header (an h2). Headings inside the article
+  // text can be h1s, so "the first h1" is unreliable: it can pick a section
+  // heading from the article body instead of the title.
   function findArticleTitle(heading) {
     const scope = heading.closest('.kb-article-wrapper') || heading.closest('.panel') || document;
-    const candidates = [...scope.querySelectorAll('h1')]
-      .filter((h1) => !h1.classList.contains('modal-title') && !h1.closest('.' + PREFIX + '-header'));
-    return candidates.find(isRendered) || null;
+    const usable = (element) => isRendered(element) &&
+      !element.classList.contains('modal-title') && !element.closest('.' + PREFIX + '-header');
+    const marked = [...scope.querySelectorAll('.kb-title-header')].find(usable);
+    if (marked) return marked;
+    // Fallback if the portal ever drops that class: only a heading above the
+    // views and rating row can be the title. Without that row, return nothing,
+    // so the tab title is used instead of a guess.
+    const viewsRow = scope.querySelector('.title-secondary-data');
+    if (!viewsRow) return null;
+    return [...scope.querySelectorAll('h1, h2')].find((element) => usable(element) &&
+      (element.compareDocumentPosition(viewsRow) & Node.DOCUMENT_POSITION_FOLLOWING)) || null;
   }
 
   function isCopyLinkControl(element) {
