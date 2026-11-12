@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Better KB shortcuts
 // @namespace    local.servicenow.better-kb-shortcuts
-// @version      0.9.12
-// @description  Adds copy, edit and Workspace shortcuts and a tidy, aligned header to knowledge portal articles.
+// @version      0.9.13
+// @description  Adds copy, edit and Workspace shortcuts, a tidy header and a ServiceNow top bar switch to knowledge portal articles.
 // @author       Miche (based on LPS KB Portal view by Lucas Vieites)
 // @homepageURL  https://github.com/Miche-Miche-Miche/Better-KB-shortcuts
 // @match        https://*.service-now.com/lps*
@@ -20,13 +20,17 @@ circles with blue line icons (Booking's icon style); hover for each name.
 Line 2: KB number and title, linked to the article.
 On the right, the heart and a bell (subscribe or unsubscribe), the same
 size as the line 1 icons and lined up with them.
-Never saves anything by itself: changes happen only when you click an action.
+A floating button at the bottom right shows or hides the ServiceNow top bar
+(the portal opens inside Platform UI while the bar is on); the choice is
+kept in this browser until you click it again.
+Never saves anything automatically; changes occur only when you click an action.
 Based on "LPS KB Portal view" v0.8.4 by Lucas Vieites:
 https://gist.github.com/lucasvieites/3e1543562b88b9f51c22fcd13c4ea1f9
 Maintainers: keep this note and the changelog up to date.
 */
 
-/** ChangeLog (newest first):
+/** Changelog (newest first):
+v0.9.13: - ServiceNow top bar on portal pages, with a floating button to turn it on or off
 v0.9.12: - Title taken from the article's own title, not a heading in the article text
 v0.9.11: - Heart and bell circles on every article, also without a subscribe button by the heart
 v0.9.10: - Heart and bell match the size and alignment of the line 1 icons
@@ -131,7 +135,200 @@ v0.1: - Initial release for the production and sub-production instances
   function debug(message) {
     if (CONFIG.DEBUG) console.log(LOG_PREFIX + message);
   }
+  // ---- ServiceNow top bar (Platform UI navigation) --------------------------
+  // The portal never shows the ServiceNow top bar itself. Platform UI can show
+  // any page of the same instance in a frame below that bar
+  // (/now/nav/ui/classic/params/target/<page>). While the bar is on, a portal
+  // page opened as the whole tab is reopened in that frame: some portal links
+  // (e.g. Recently Viewed) leave the frame, and this brings them back.
+  // A small floating button turns the bar on or off; the choice is kept in
+  // this browser until the button is clicked again. Nothing is saved in
+  // ServiceNow.
+  const TOP_BAR = {
+    // Set to false to switch this whole feature off (no button, no reopening).
+    ENABLED: true,
+    // Platform UI page that frames another page of the same instance.
+    WRAPPER_PREFIX: '/now/nav/ui/classic/params/target/',
+    // Only the portal itself; other addresses starting with "/lps" are ignored.
+    PORTAL_PATHS: ['/lps', '/lps/'],
+    // Browser-local choice ('off' = plain portal). localStorage is shared by
+    // the framed page and the whole-tab page of one instance, so both agree.
+    STORAGE_KEY: PREFIX + '.topBar',
+    // Loop guard (this tab only): if the same page leaves the frame again
+    // within this many milliseconds of being reopened in it, stay on the
+    // whole-tab page instead of reloading forever.
+    LOOP_KEY: PREFIX + '.topBarReopened',
+    LOOP_WINDOW_MS: 10000,
+    // Button position from the bottom-right corner (pixels). Change these if
+    // another floating button (e.g. a chat bubble) sits in the same place.
+    BUTTON_RIGHT_PX: 16,
+    BUTTON_BOTTOM_PX: 16,
+    BUTTON_ID: PREFIX + '-topbar-toggle'
+  };
 
+  function topBarWanted() {
+    try {
+      return window.localStorage.getItem(TOP_BAR.STORAGE_KEY) !== 'off';
+    } catch (error) {
+      return true; // Storage blocked: behave as before (bar on).
+    }
+  }
+
+  function saveTopBarWanted(on) {
+    try {
+      if (on) window.localStorage.removeItem(TOP_BAR.STORAGE_KEY);
+      else window.localStorage.setItem(TOP_BAR.STORAGE_KEY, 'off');
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  // Where this copy of the script runs:
+  // 'framed' - the portal directly inside Platform UI (bar visible);
+  // 'full'   - the portal as the whole tab (no bar);
+  // ''       - anything else (another page, a nested frame): do nothing.
+  function topBarContext() {
+    if (TOP_BAR.PORTAL_PATHS.indexOf(window.location.pathname) === -1) return '';
+    if (window.top === window.self) return 'full';
+    try {
+      if (window.parent === window.top &&
+          window.top.location.origin === window.location.origin &&
+          window.top.location.pathname.indexOf('/now/nav/ui/') === 0) return 'framed';
+    } catch (error) {
+      // A parent on another site cannot be read, so it is not Platform UI.
+    }
+    return '';
+  }
+
+  // The wrapper takes the page as one percent-encoded path segment without
+  // the leading slash (e.g. lps%3Fid%3Dindex). encodeURIComponent also
+  // encodes existing % signs, so already-encoded values arrive unchanged.
+  function buildTopBarUrl(loc) {
+    const target = loc.pathname.replace(/^\//, '') + loc.search + loc.hash;
+    return loc.origin + TOP_BAR.WRAPPER_PREFIX + encodeURIComponent(target);
+  }
+
+  function recentlyReopened(url, now) {
+    try {
+      const saved = JSON.parse(window.sessionStorage.getItem(TOP_BAR.LOOP_KEY) || 'null');
+      return !!saved && saved.url === url && (now - saved.time) < TOP_BAR.LOOP_WINDOW_MS;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function rememberReopen(url, now) {
+    try {
+      window.sessionStorage.setItem(TOP_BAR.LOOP_KEY, JSON.stringify({ url: url, time: now }));
+    } catch (error) {
+      // Storage blocked: reopening still works, only the loop guard is lost.
+    }
+  }
+
+  // Returns true when the page is being reopened inside Platform UI, so the
+  // rest of the script does not work on a page that is about to be replaced.
+  function reopenWithTopBar() {
+    if (!TOP_BAR.ENABLED || topBarContext() !== 'full' || !topBarWanted()) return false;
+    const url = buildTopBarUrl(window.location);
+    const now = Date.now();
+    if (recentlyReopened(url, now)) {
+      console.info(LOG_PREFIX + 'Page left the top bar again straight away; staying on the whole-tab page.');
+      return false;
+    }
+    rememberReopen(url, now);
+    // replace(): the whole-tab address is not kept in history, so Back does
+    // not land on it and bounce straight back into this redirect.
+    window.location.replace(url);
+    return true;
+  }
+
+  function toggleTopBar() {
+    const context = topBarContext();
+    if (context === 'framed') {
+      if (!saveTopBarWanted(false)) {
+        console.warn(LOG_PREFIX + 'Browser storage is blocked, so the top bar cannot be turned off.');
+        return;
+      }
+      // Show the current portal page as the whole tab, without the bar.
+      window.top.location.href = window.location.href;
+    } else if (context === 'full') {
+      saveTopBarWanted(true);
+      window.location.assign(buildTopBarUrl(window.location));
+    }
+  }
+
+  // Window outline with a title bar; the "hide" version is struck through.
+  // Built as SVG elements, never as markup strings.
+  function makeTopBarIcon(hide) {
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    const shapes = [['rect', { x: 3, y: 4, width: 18, height: 16, rx: 2 }], ['path', { d: 'M3 9h18' }]];
+    if (hide) shapes.push(['path', { d: 'M3 3l18 18' }]);
+    for (const [tag, attributes] of shapes) {
+      const shape = document.createElementNS(ns, tag);
+      for (const [key, value] of Object.entries(attributes)) shape.setAttribute(key, String(value));
+      svg.appendChild(shape);
+    }
+    return svg;
+  }
+
+  function ensureTopBarToggle() {
+    if (!document.body) return;
+    const context = topBarContext();
+    let button = document.getElementById(TOP_BAR.BUTTON_ID);
+    if (!context) {
+      if (button) button.remove();
+      return;
+    }
+    if (!document.getElementById(TOP_BAR.BUTTON_ID + '-style')) {
+      const style = document.createElement('style');
+      style.id = TOP_BAR.BUTTON_ID + '-style';
+      style.textContent = `
+        #${TOP_BAR.BUTTON_ID} {
+          position: fixed; right: ${TOP_BAR.BUTTON_RIGHT_PX}px; bottom: ${TOP_BAR.BUTTON_BOTTOM_PX}px; z-index: 10000;
+          display: inline-flex; align-items: center; justify-content: center;
+          width: ${CONFIG.CIRCLE_SIZE_PX}px; height: ${CONFIG.CIRCLE_SIZE_PX}px; margin: 0; padding: 0;
+          border: 0; border-radius: 50%; cursor: pointer;
+          background: ${CONFIG.CIRCLE_COLOR}; color: ${CONFIG.ICON_COLOR};
+          box-shadow: 0 1px 4px rgba(0, 0, 0, .25);
+        }
+        #${TOP_BAR.BUTTON_ID}:hover, #${TOP_BAR.BUTTON_ID}:focus-visible { background: ${CONFIG.CIRCLE_HOVER_COLOR}; }
+        #${TOP_BAR.BUTTON_ID}:focus-visible { outline: 2px solid ${CONFIG.ICON_COLOR}; outline-offset: 2px; }
+        #${TOP_BAR.BUTTON_ID} svg {
+          width: 17px; height: 17px;
+          fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round;
+        }
+        @media print { #${TOP_BAR.BUTTON_ID} { display: none; } }
+      `;
+      (document.head || document.documentElement).appendChild(style);
+    }
+    if (!button) {
+      button = document.createElement('button');
+      button.type = 'button';
+      button.id = TOP_BAR.BUTTON_ID;
+      button.addEventListener('click', toggleTopBar);
+      document.body.appendChild(button);
+    }
+    const hide = context === 'framed';
+    const label = hide ? 'Hide the ServiceNow top bar' : 'Show the ServiceNow top bar';
+    if (button.getAttribute('aria-label') !== label) {
+      button.setAttribute('aria-label', label);
+      button.setAttribute('title', label);
+      button.replaceChildren(makeTopBarIcon(hide));
+    }
+  }
+
+  if (TOP_BAR.ENABLED) {
+    if (reopenWithTopBar()) return;
+    ensureTopBarToggle();
+    // Put the button back if the portal ever replaces the page body's
+    // children; only direct children are watched, so this stays cheap.
+    if (document.body) new MutationObserver(ensureTopBarToggle).observe(document.body, { childList: true });
+  }
   // ---- Pure helpers (no page changes) ---------------------------------------
 
   // The KB number is read from the portal's "kb-number-info" element, as in
